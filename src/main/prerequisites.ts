@@ -1,10 +1,10 @@
 import { execFile } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { get as httpsGet } from 'https'
 import { join } from 'path'
 import { pipeline } from 'stream/promises'
 import { promisify } from 'util'
-import os from 'os'
+import os, { tmpdir } from 'os'
 import type { InstallProgress, PrerequisiteItem, PrerequisitesReport } from '../shared/types'
 
 const execFileAsync = promisify(execFile)
@@ -26,14 +26,17 @@ export function prerequisitesDir(appRoot: string): string {
 async function regQueryDword(key: string, valueName: string): Promise<number | null> {
   try {
     const { stdout } = await execFileAsync('reg', ['query', key, '/v', valueName], { windowsHide: true })
-    const match = stdout.match(new RegExp(`${valueName}\\s+REG_DWORD\\s+0x([0-9a-fA-F]+)`, 'i'))
-      ?? stdout.match(new RegExp(`${valueName}\\s+REG_DWORD\\s+(\\d+)`, 'i'))
-
-    if (!match) {
-      return null
+    const hexMatch = stdout.match(new RegExp(`${valueName}\\s+REG_DWORD\\s+0x([0-9a-fA-F]+)`, 'i'))
+    if (hexMatch) {
+      return Number.parseInt(hexMatch[1], 16)
     }
 
-    return Number.parseInt(match[1], match[1].length > 4 ? 16 : 10)
+    const decMatch = stdout.match(new RegExp(`${valueName}\\s+REG_DWORD\\s+(\\d+)`, 'i'))
+    if (decMatch) {
+      return Number.parseInt(decMatch[1], 10)
+    }
+
+    return null
   } catch {
     return null
   }
@@ -109,31 +112,42 @@ function isSuccessfulInstallerExit(exitCode: number): boolean {
   return exitCode === 0 || exitCode === 1638 || exitCode === 3010
 }
 
-async function runElevatedSilentInstaller(installerPath: string, args: string[]): Promise<{ exitCode: number; cancelled: boolean }> {
+async function runElevatedSilentInstaller(
+  installerPath: string,
+  args: string[]
+): Promise<{ exitCode: number; cancelled: boolean; detail: string | null }> {
   const argLiteral = args.map((arg) => `'${arg.replace(/'/g, "''")}'`).join(',')
-  const pathLiteral = installerPath.replace(/'/g, "''")
+  const scriptPath = join(tmpdir(), `asf-easy-prereq-${Date.now()}.ps1`)
   const script = `
 $ErrorActionPreference = 'Stop'
-try {
-  $proc = Start-Process -FilePath '${pathLiteral}' -ArgumentList @(${argLiteral}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-  if ($null -eq $proc) { exit 1223 }
-  exit $proc.ExitCode
-} catch {
-  exit 1
+$installer = '${installerPath.replace(/'/g, "''")}'
+if (-not (Test-Path -LiteralPath $installer)) {
+  Write-Error "Installer not found: $installer"
+  exit 2
 }
+$proc = Start-Process -FilePath $installer -ArgumentList @(${argLiteral}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+if ($null -eq $proc) { exit 1223 }
+exit $proc.ExitCode
 `.trim()
+
+  writeFileSync(scriptPath, script, 'utf8')
 
   try {
     await execFileAsync(
       'powershell.exe',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
       { windowsHide: true }
     )
-    return { exitCode: 0, cancelled: false }
+    return { exitCode: 0, cancelled: false, detail: null }
   } catch (error) {
-    const execError = error as NodeJS.ErrnoException & { status?: number }
+    const execError = error as NodeJS.ErrnoException & { status?: number; stderr?: string; message?: string }
     const exitCode = typeof execError.status === 'number' ? execError.status : 1
-    return { exitCode, cancelled: exitCode === 1223 }
+    const detail = typeof execError.stderr === 'string' && execError.stderr.trim()
+      ? execError.stderr.trim()
+      : execError.message ?? null
+    return { exitCode, cancelled: exitCode === 1223, detail }
+  } finally {
+    rmSync(scriptPath, { force: true })
   }
 }
 
@@ -200,8 +214,18 @@ async function installVcRedist(appRoot: string, onProgress: (progress: InstallPr
     throw new Error('Prerequisite install cancelled at the UAC prompt.')
   }
 
+  if (await isVcRedistInstalled()) {
+    onProgress({
+      phase: 'prerequisites-install',
+      percent: 100,
+      message: 'Visual C++ Redistributable is installed'
+    })
+    return
+  }
+
   if (!isSuccessfulInstallerExit(result.exitCode)) {
-    throw new Error(`Visual C++ install failed (exit code ${result.exitCode}).`)
+    const detail = result.detail ? ` ${result.detail}` : ''
+    throw new Error(`Visual C++ install failed (exit code ${result.exitCode}).${detail}`)
   }
 
   if (!(await isVcRedistInstalled())) {

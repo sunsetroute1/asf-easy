@@ -26,7 +26,7 @@ const WINDOWS_ASSET = 'ASF-win-x64.zip'
 let asfProcess: ChildProcessWithoutNullStreams | null = null
 
 function appRoot(): string {
-  return join(app.getPath('userData'), 'asf-easy')
+  return app.getPath('userData')
 }
 
 export function getAppRoot(): string {
