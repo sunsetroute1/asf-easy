@@ -9,9 +9,12 @@ import {
   getPrerequisitesReport,
   getStatus,
   installAsf,
+  getDashboardBotInputUrl,
   openConfigFolder,
+  pauseAllBotsForLogin,
   readSettings,
   saveBotConfig,
+  setBotEnabled,
   shouldLaunchInBackground,
   startAsf,
   stopAsf,
@@ -84,13 +87,16 @@ function createWindow(): void {
   }
 }
 
-async function openDashboardWindow(): Promise<void> {
+async function openDashboardWindow(path = ''): Promise<void> {
   if (!(await waitForIpc(3000))) {
     startAsf()
     await waitForIpc()
   }
 
+  const url = `${getDashboardUrl()}${path.startsWith('/') ? path : path ? `/${path}` : ''}`
+
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    await dashboardWindow.loadURL(url)
     dashboardWindow.focus()
     return
   }
@@ -108,7 +114,7 @@ async function openDashboardWindow(): Promise<void> {
     }
   })
 
-  dashboardWindow.loadURL(getDashboardUrl())
+  dashboardWindow.loadURL(url)
   dashboardWindow.on('closed', () => {
     dashboardWindow = null
   })
@@ -205,6 +211,20 @@ ipcMain.handle('asf:stop', () => {
 ipcMain.handle('asf:openDashboard', async () => {
   await openDashboardWindow()
 })
+
+ipcMain.handle('asf:openDashboardBotInput', async (_event, botName: string) => {
+  const name = botName.trim()
+  if (!name) {
+    throw new Error('Bot name is required')
+  }
+  await openDashboardWindow(getDashboardBotInputUrl(name).replace(getDashboardUrl(), ''))
+})
+
+ipcMain.handle('asf:setBotEnabled', (_event, botName: string, enabled: boolean) => {
+  setBotEnabled(botName, enabled)
+})
+
+ipcMain.handle('asf:pauseAllBotsForLogin', () => pauseAllBotsForLogin())
 
 ipcMain.handle('asf:openConfigFolder', () => {
   shell.openPath(openConfigFolder())

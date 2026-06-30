@@ -10,6 +10,8 @@ interface DashboardStepProps {
   onStart: () => void
   onStop: () => void
   onOpenDashboard: () => void
+  onOpenBotInput: (botName: string) => void
+  onPauseBots: () => void
   onOpenConfigFolder: () => void
   onUpdateSettings: (patch: Partial<AppSettings>) => void
 }
@@ -23,13 +25,22 @@ export function DashboardStep({
   onStart,
   onStop,
   onOpenDashboard,
+  onOpenBotInput,
+  onPauseBots,
   onOpenConfigFolder,
   onUpdateSettings
 }: DashboardStepProps): JSX.Element {
+  const primaryBot = bots[0]?.name
+
   return (
     <section className="panel">
       <h2>Dashboard</h2>
-      <p className="lead">Start ASF, open the built-in ASF-ui dashboard, and adjust background behavior below.</p>
+      <p className="lead">Start ASF, complete Steam Guard through the Input page, then enable your bot in the dashboard.</p>
+
+      <div className="notice">
+        New bots start with <strong>Enabled: false</strong> to avoid login loops. If Steam rate-limited you, click{' '}
+        <strong>Pause all bot logins</strong>, stop ASF, and wait at least 25 minutes before trying again.
+      </div>
 
       <div className="status-grid">
         <div className="metric">
@@ -59,6 +70,16 @@ export function DashboardStep({
         <button type="button" className="primary" onClick={onOpenDashboard}>
           Open dashboard
         </button>
+        {primaryBot && (
+          <button type="button" className="secondary" onClick={() => onOpenBotInput(primaryBot)}>
+            Steam Guard input
+          </button>
+        )}
+        {bots.some((bot) => bot.enabled) && (
+          <button type="button" className="secondary" onClick={onPauseBots}>
+            Pause all bot logins
+          </button>
+        )}
         <button type="button" className="secondary" onClick={onOpenConfigFolder}>
           Open config folder
         </button>

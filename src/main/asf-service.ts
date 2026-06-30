@@ -237,21 +237,158 @@ export async function installAsf(onProgress: (progress: InstallProgress) => void
   if (!existsSync(join(configDir(), 'ASF.json'))) {
     writeFileSync(
       join(configDir(), 'ASF.json'),
-      JSON.stringify(
-        {
-          IPC: true,
-          AutoRestart: true,
-          Headless: false
-        },
-        null,
-        2
-      ),
+      JSON.stringify(getTypicalGlobalDefaults(), null, 2),
       'utf8'
     )
+  } else {
+    const asfConfigPath = join(configDir(), 'ASF.json')
+    try {
+      const asfConfig = JSON.parse(readFileSync(asfConfigPath, 'utf8')) as Record<string, unknown>
+      if (Object.keys(asfConfig).length === 0) {
+        writeFileSync(asfConfigPath, JSON.stringify(getTypicalGlobalDefaults(), null, 2), 'utf8')
+      }
+    } catch {
+      // Leave invalid ASF.json for the user to fix manually.
+    }
   }
 
   onProgress({ phase: 'done', percent: 100, message: `ASF ${release.tag_name} installed` })
   return { version: release.tag_name.replace(/^v/i, '') }
+}
+
+function getTypicalGlobalDefaults(): Record<string, unknown> {
+  return {
+    IPC: true,
+    AutoRestart: true,
+    Headless: false,
+    DefaultBot: 'Main',
+    FarmingDelay: 15,
+    FilterBadBots: true
+  }
+}
+
+function normalizeSteamUserPermissions(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+
+  const normalized: Record<string, number> = {}
+  for (const [steamId, permission] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof permission === 'number') {
+      normalized[steamId] = permission
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+function getTypicalBotDefaults(): Record<string, unknown> {
+  return {
+    AcceptGifts: false,
+    BotBehaviour: 0,
+    CompleteTypesToSend: [],
+    Enabled: true,
+    FarmingOrders: [],
+    FarmingPreferences: 16,
+    GamesPlayedWhileIdle: [],
+    GamingDeviceType: 1,
+    HoursUntilCardDrops: 3,
+    LootableTypes: [1, 3, 5],
+    MatchableTypes: [5],
+    OnlineFlags: 0,
+    OnlineStatus: 7,
+    PasswordFormat: 0,
+    RedeemingPreferences: 0,
+    RemoteCommunication: 3,
+    SendTradePeriod: 0,
+    SteamUserPermissions: {},
+    TradeCheckPeriod: 60,
+    TradingPreferences: 0,
+    TransferableTypes: [1, 3, 5],
+    UseLoginKeys: true,
+    UserInterfaceMode: 0
+  }
+}
+
+function buildBotConfig(input: BotConfigInput, existing: Record<string, unknown> | null): Record<string, unknown> {
+  const permissions = normalizeSteamUserPermissions(existing?.SteamUserPermissions)
+  const isNewBot = existing === null
+
+  return {
+    ...getTypicalBotDefaults(),
+    ...(existing ?? {}),
+    // New bots stay disabled until the user completes Steam Guard via the dashboard Input tab.
+    Enabled: isNewBot ? false : existing?.Enabled !== false,
+    SteamLogin: input.steamLogin,
+    SteamPassword: input.steamPassword,
+    SteamUserPermissions: permissions ?? {}
+  }
+}
+
+export function setBotEnabled(botName: string, enabled: boolean): void {
+  const config = readBotJson(botName)
+  if (!config) {
+    throw new Error(`Bot "${botName}" was not found`)
+  }
+
+  config.Enabled = enabled
+  writeFileSync(botConfigPath(botName), JSON.stringify(config, null, 2), 'utf8')
+}
+
+export function pauseAllBotsForLogin(): string[] {
+  const paused: string[] = []
+  for (const botName of listBots()) {
+    const config = readBotJson(botName)
+    if (config?.Enabled !== false) {
+      setBotEnabled(botName, false)
+      paused.push(botName)
+    }
+  }
+  return paused
+}
+
+export function getDashboardBotInputUrl(botName: string): string {
+  return `${IPC_URL}/bot/${encodeURIComponent(botName)}/input`
+}
+
+export function applyTypicalBotSettings(botName: string): void {
+  const existing = readBotJson(botName)
+  if (!existing) {
+    throw new Error(`Bot "${botName}" was not found`)
+  }
+
+  const steamLogin = typeof existing.SteamLogin === 'string' ? existing.SteamLogin : ''
+  const steamPassword = typeof existing.SteamPassword === 'string' ? existing.SteamPassword : ''
+
+  if (!steamLogin || !steamPassword) {
+    throw new Error(`Bot "${botName}" is missing Steam credentials`)
+  }
+
+  saveBotConfig({ botName, steamLogin, steamPassword })
+}
+
+function repairBotConfigFile(botName: string): boolean {
+  const config = readBotJson(botName)
+  if (!config) {
+    return false
+  }
+
+  const permissions = config.SteamUserPermissions
+  const invalidPermissions =
+    permissions !== undefined &&
+    (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions))
+
+  if (!invalidPermissions) {
+    return false
+  }
+
+  delete config.SteamUserPermissions
+  writeFileSync(botConfigPath(botName), JSON.stringify(config, null, 2), 'utf8')
+  return true
+}
+
+export function repairAllBotConfigs(): string[] {
+  return listBots().filter((botName) => repairBotConfigFile(botName))
 }
 
 export function saveBotConfig(input: BotConfigInput): void {
@@ -262,14 +399,7 @@ export function saveBotConfig(input: BotConfigInput): void {
   mkdirSync(configDir(), { recursive: true })
 
   const existing = readBotJson(input.botName)
-  const botConfig = {
-    Enabled: existing?.Enabled ?? true,
-    SteamLogin: input.steamLogin,
-    SteamPassword: input.steamPassword,
-    SteamUserPermissions: existing?.SteamUserPermissions ?? 0,
-    OnlineStatus: existing?.OnlineStatus ?? 1,
-    FarmingPreferences: existing?.FarmingPreferences ?? 1
-  }
+  const botConfig = buildBotConfig(input, existing)
 
   writeFileSync(botConfigPath(input.botName), JSON.stringify(botConfig, null, 2), 'utf8')
 
@@ -308,6 +438,10 @@ export function getBotSummaries(): BotSummary[] {
 }
 
 export async function getStatus(): Promise<AsfStatus> {
+  if (isInstalled()) {
+    repairAllBotConfigs()
+  }
+
   const ipcReady = await checkIpcReady()
 
   return {

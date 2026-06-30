@@ -195,6 +195,16 @@ function App(): JSX.Element {
     setActionMessage('ASF stopped.')
   }
 
+  async function handlePauseBots(): Promise<void> {
+    const paused = await window.asfEasy.pauseAllBotsForLogin()
+    await refreshStatus()
+    setActionMessage(
+      paused.length
+        ? `Paused login for: ${paused.join(', ')}. Wait at least 25 minutes if Steam rate-limited you.`
+        : 'All bots were already paused.'
+    )
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -333,8 +343,10 @@ function App(): JSX.Element {
 
         {step === 'steamguard' && (
           <SteamGuardStep
+            botName={bots[0]?.name ?? (botName.trim() || 'Main')}
             onContinue={() => setStep('dashboard')}
             onOpenGuide={(url) => void window.asfEasy.openExternal(url)}
+            onOpenBotInput={(name) => void window.asfEasy.openDashboardBotInput(name)}
           />
         )}
 
@@ -354,6 +366,8 @@ function App(): JSX.Element {
             onStart={() => void handleStart()}
             onStop={() => void handleStop()}
             onOpenDashboard={() => void window.asfEasy.openDashboard()}
+            onOpenBotInput={(name) => void window.asfEasy.openDashboardBotInput(name)}
+            onPauseBots={() => void handlePauseBots()}
             onOpenConfigFolder={() => void window.asfEasy.openConfigFolder()}
             onUpdateSettings={(patch) => void handleUpdateSettings(patch)}
           />

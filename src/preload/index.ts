@@ -22,6 +22,10 @@ const api = {
   start: (): Promise<{ ready: boolean }> => ipcRenderer.invoke('asf:start'),
   stop: (): Promise<void> => ipcRenderer.invoke('asf:stop'),
   openDashboard: (): Promise<void> => ipcRenderer.invoke('asf:openDashboard'),
+  openDashboardBotInput: (botName: string): Promise<void> => ipcRenderer.invoke('asf:openDashboardBotInput', botName),
+  setBotEnabled: (botName: string, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('asf:setBotEnabled', botName, enabled),
+  pauseAllBotsForLogin: (): Promise<string[]> => ipcRenderer.invoke('asf:pauseAllBotsForLogin'),
   openConfigFolder: (): Promise<void> => ipcRenderer.invoke('asf:openConfigFolder'),
   listBots: (): Promise<string[]> => ipcRenderer.invoke('asf:listBots'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('asf:openExternal', url)
